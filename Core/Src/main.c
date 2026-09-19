@@ -22,20 +22,14 @@
 #include "dma.h"
 #include "i2c.h"
 #include "stm32f3xx_hal.h"
-#include "stm32f3xx_hal_adc.h"
-#include "stm32f3xx_hal_adc_ex.h"
-#include "stm32f3xx_hal_def.h"
-#include "stm32f3xx_hal_gpio.h"
-#include "stm32f3xx_hal_tim.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
-#include <stdint.h>
-#include <stdio.h>
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdint.h>
+#include <stdio.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -52,7 +46,7 @@ typedef enum {
   READ_POT_STATE,            // Leitura do potenciômetro via ADC
   CONTROL_STATE,             // Calcula o PWM
   APPLY_PWM_STATE,           // Atualiza o PWM do LED
-  UPDATE_INDICATORS_STATE,   // Atializa os 4 LEDs indicadores
+  UPDATE_INDICATORS_STATE,   // Atualiza os 4 LEDs indicadores
   WAIT_STATE,                // Aguarda o tempo de resposta
   ERROR_STATE,               // Trata o erro
 } StateId;
@@ -73,6 +67,13 @@ typedef enum {
 
 #define ERROR_BLINK_DELAY_MS 250
 
+#define PWM_CONTROL_STEP 100
+
+// Variáveis I²C
+#define GY302_I2C_ADDR (0x5C << 1)
+#define GY302_I2C_POWER_ON 0x01
+#define GY302_I2C_ON_TIME_HR_MODE 0x20
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -84,7 +85,7 @@ typedef enum {
 
 /* USER CODE BEGIN PV */
 
-uint16_t sensor_value = 0;
+uint32_t sensor_value = 0;
 
 uint16_t adc_buffer[16];
 uint16_t pot_value = 0;
@@ -109,6 +110,12 @@ typedef StateId StateFunction(Context *ctx) ;
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+// Habilita o uso do printf para enviar dados pelo UART
+void _write(int file, char *ptr, int len) {
+  // Transmit the data over UART
+  HAL_UART_Transmit(&huart2, (uint8_t*)ptr, len, HAL_MAX_DELAY);
+}
+
 // Função para obter a média dos valores do potenciometro
 uint16_t get_pot_average(uint16_t *vector)
 {
@@ -124,11 +131,11 @@ uint16_t get_pot_average(uint16_t *vector)
 // Função do estado de setup
 StateId state_setup(Context *ctx) 
 {
-  printf("[INFO] Starting system...\n");
+  // printf("[INFO] Starting system...\n");
 
   // Incia o PWM do TIM3 CH1
-  if (HAL_TIM_PWM_Start(TIM_HandleTypeDef *htim3, uint32_t Channel) != HAL_OK) {
-    printf("[ERROR] Erro starting TIM3 PWM\n");
+  if (HAL_TIM_PWM_Start( &htim3, TIM_CHANNEL_1) != HAL_OK) {
+    // printf("[ERROR] Erro starting TIM3 PWM\n");
     return ERROR_STATE;
   }
 
@@ -144,7 +151,7 @@ StateId state_setup(Context *ctx)
   HAL_GPIO_WritePin(LED_D4_GPIO_Port, LED_D4_Pin, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(LED_D5_GPIO_Port, LED_D5_Pin, GPIO_PIN_RESET);
 
-  printf("[INFO] System OK\n");
+  // printf("[INFO] System OK\n");
 
   return READ_SENSOR_STATE;
 }
@@ -152,16 +159,32 @@ StateId state_setup(Context *ctx)
 // Função do estado de leitura do sensor
 StateId state_read_sensor(Context *ctx) 
 {
-  printf("[INFO] Reading sensor...\n");
+  // printf("[INFO] Reading sensor...\n");
+
+  uint8_t power_on = GY302_I2C_POWER_ON;
+  uint8_t measure = GY302_I2C_ON_TIME_HR_MODE;
+  uint8_t rx_data[2] = {0};
+
+  // Solicia iniciação do sensor
+  HAL_I2C_Master_Transmit(&hi2c1, GY302_I2C_ADDR, &power_on, 1, 100);
+
+  // Solicia a leitura da luminosidade
+  HAL_I2C_Master_Transmit(&hi2c1, GY302_I2C_ADDR, &measure, 1, 100);
+
+  // Tempo de leitura (datasheet)
+  HAL_Delay(180);
 
   // Lê o sensor de luminosidade
-  // Implementar função para ler o sensor sensor_read(&sensor_value)
-  if (HAL_OK != HAL_OK) {
+  if (HAL_I2C_Master_Receive(&hi2c1, GY302_I2C_ADDR, rx_data, 2, 100) != HAL_OK) {
     printf("[ERROR] Erro reading sensor\n");
     return ERROR_STATE;
   }
+  
+  // Converte o valor bruto
+  uint16_t raw_val = (rx_data[0] << 8) | rx_data[1];
+  sensor_value = (uint32_t)raw_val / 1.2;
 
-  printf("[INFO] Brightness: %u\n", sensor_value);
+  printf("[INFO] Raw: %u | Lux: %lu\n", raw_val, sensor_value);
 
   return READ_POT_STATE;
 }
@@ -169,17 +192,17 @@ StateId state_read_sensor(Context *ctx)
 // Função do estado de leitura do potenciometro
 StateId state_read_pot(Context *ctx) 
 {
-  printf("[INFO] Reading potentiometer...\n");
+  // printf("[INFO] Reading potentiometer...\n");
 
   // Obtêm o valor
   pot_value = get_pot_average(adc_buffer);
 
-  printf("[INFO] Potentiometer: %u\n", pot_value);
+  // printf("[INFO] Potentiometer: %u\n", pot_value);
 
-  // Transforma o adc em milisegudos (20ms a 500ms)
-  reponso_delay_ms = 20 + ((uint32_t)pot_value * 480) / 4095;
+  // Transforma o adc em milisegudos (20ms a 4s)
+  reponso_delay_ms = 20 + ((uint32_t)pot_value / 4095) * (3980 / 4095);
 
-  printf("[INFO] Response time: %u\n", pot_value);
+  // printf("[INFO] Response time: %u\n", pot_value);
 
   return CONTROL_STATE;
 }
@@ -187,10 +210,10 @@ StateId state_read_pot(Context *ctx)
 // Função do estado de controle e cálculo do PWM
 StateId state_control(Context *ctx)
 {
-  printf("[INFO] Controlling PWM...\n");
+  // printf("[INFO] Controlling PWM...\n");
 
   // Converte o nível do sensor em em CCR (duty cycle)
-  pwm_target = ARR - ((uint32_t)sensor_value * ARR) / 4095;
+  pwm_target = ARR - ((uint32_t)sensor_value * ARR) / 54612;
 
   // limita o valor
   if (pwm_target > 999)
@@ -204,22 +227,36 @@ StateId state_control(Context *ctx)
 // Função do estado de aplicação do PWM
 StateId state_apply_pwm(Context *ctx)
 {
-  printf("[INFO] Applying PWM...\n");
+  // printf("[INFO] Applying PWM...======================\n");
 
   // Reduz o PWM aos poucos
   if (pwm_current < pwm_target)
   {
-    pwm_current++;
+    if (pwm_current + PWM_CONTROL_STEP >= pwm_target)
+    {
+      pwm_current = pwm_target;
+    }
+    else 
+    {
+      pwm_current = pwm_current + PWM_CONTROL_STEP;
+    }
   }
   else if (pwm_current > pwm_target)
   {
-    pwm_current--;
+    if (pwm_current - PWM_CONTROL_STEP <= 0) 
+    {
+      pwm_current = 0;
+    }
+    else 
+    {
+      pwm_current = pwm_current - PWM_CONTROL_STEP;
+    }
   }
 
   // Atualiza o valor do CCR
   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, pwm_current);
 
-  printf("[INFO] TIM channel 1 CRR: %u\n", pwm_current);
+  // printf("[INFO] TIM channel 1 CRR: %u\n", pwm_current);
 
   return UPDATE_INDICATORS_STATE;
 }
@@ -227,12 +264,12 @@ StateId state_apply_pwm(Context *ctx)
 //Função do estado de atualização dos indicadores
 StateId state_update_indicators(Context *ctx)
 {
-  printf("[INFO] Updating indicators...\n");
+  // printf("[INFO] Updating indicators...\n");
 
   // Verifica qual o LED que deve ser ligado e desliga os demais
   
   // 25% do PWM
-  if (pwm_current >= PWM_25_PCT)
+  if (ARR - pwm_current >= PWM_25_PCT)
   {
     HAL_GPIO_WritePin(LED_D2_GPIO_Port, LED_D2_Pin, GPIO_PIN_SET);
   }
@@ -242,7 +279,7 @@ StateId state_update_indicators(Context *ctx)
   }
   
   // 50% do PWM
-  if (pwm_current >= PWM_50_PCT)
+  if (ARR - pwm_current >= PWM_50_PCT)
   {
     HAL_GPIO_WritePin(LED_D3_GPIO_Port, LED_D3_Pin, GPIO_PIN_SET);
   }
@@ -252,7 +289,7 @@ StateId state_update_indicators(Context *ctx)
   }
   
   // 75% do PWM
-  if (pwm_current >= PWM_75_PCT)
+  if (ARR - pwm_current >= PWM_75_PCT)
   {
     HAL_GPIO_WritePin(LED_D4_GPIO_Port, LED_D4_Pin, GPIO_PIN_SET);
   }
@@ -262,7 +299,7 @@ StateId state_update_indicators(Context *ctx)
   }
   
   // 90% do PWM
-  if (pwm_current >= PWM_90_PCT)
+  if (ARR - pwm_current >= PWM_90_PCT)
   {
     HAL_GPIO_WritePin(LED_D5_GPIO_Port, LED_D5_Pin, GPIO_PIN_SET);
   }
@@ -286,13 +323,13 @@ StateId state_wait(Context *ctx)
     return READ_SENSOR_STATE;
   }
 
-  return APPLY_PWM_STATE;
+  return CONTROL_STATE;
 }
 
 // Função do estado de erro
 StateId state_error(Context *ctx)
 {
-  printf("[ERROR] Error\n");
+  // printf("[ERROR] Error\n");
 
   // Deliga o PWM 
   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_1, PWM_0_PCT);
@@ -308,6 +345,9 @@ StateId state_error(Context *ctx)
   }
 }
 
+
+StateId currentState = SETUP_STATE;
+
 /* USER CODE END 0 */
 
 /**
@@ -321,7 +361,6 @@ int main(void)
 
   // Inicia tipos
   Context ctx;
-  StateId currentState = SETUP_STATE;
 
   // Define tabela de estados
   StateFunction *state_table[] = {
@@ -333,7 +372,7 @@ int main(void)
     [UPDATE_INDICATORS_STATE] = state_update_indicators,
     [WAIT_STATE] = state_wait,
     [ERROR_STATE] = state_error
-  }
+  };
 
 
   /* USER CODE END 1 */
@@ -404,7 +443,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL16;
+  RCC_OscInitStruct.PLL.PLLMUL = RCC_PLL_MUL4;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -419,13 +458,13 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
   {
     Error_Handler();
   }
   PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_I2C1|RCC_PERIPHCLK_TIM1
                               |RCC_PERIPHCLK_ADC12;
-  PeriphClkInit.Adc12ClockSelection = RCC_ADC12PLLCLK_DIV1;
+  PeriphClkInit.Adc12ClockSelection = RCC_ADC12PLLCLK_DIV16;
   PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_HSI;
   PeriphClkInit.Tim1ClockSelection = RCC_TIM1CLK_HCLK;
   if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
