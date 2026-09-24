@@ -213,7 +213,7 @@ StateId state_control(Context *ctx)
   // printf("[INFO] Controlling PWM...\n");
 
   // Converte o nível do sensor em em CCR (duty cycle)
-  pwm_target = ARR - ((uint32_t)sensor_value * ARR) / 54612;
+  pwm_target = ((uint32_t)sensor_value * ARR) / 54612;
 
   // limita o valor
   if (pwm_target > 999)
@@ -269,7 +269,7 @@ StateId state_update_indicators(Context *ctx)
   // Verifica qual o LED que deve ser ligado e desliga os demais
   
   // 25% do PWM
-  if (ARR - pwm_current >= PWM_25_PCT)
+  if (pwm_current >= PWM_25_PCT)
   {
     HAL_GPIO_WritePin(LED_D2_GPIO_Port, LED_D2_Pin, GPIO_PIN_SET);
   }
@@ -279,7 +279,7 @@ StateId state_update_indicators(Context *ctx)
   }
   
   // 50% do PWM
-  if (ARR - pwm_current >= PWM_50_PCT)
+  if (pwm_current >= PWM_50_PCT)
   {
     HAL_GPIO_WritePin(LED_D3_GPIO_Port, LED_D3_Pin, GPIO_PIN_SET);
   }
@@ -289,7 +289,7 @@ StateId state_update_indicators(Context *ctx)
   }
   
   // 75% do PWM
-  if (ARR - pwm_current >= PWM_75_PCT)
+  if (pwm_current >= PWM_75_PCT)
   {
     HAL_GPIO_WritePin(LED_D4_GPIO_Port, LED_D4_Pin, GPIO_PIN_SET);
   }
@@ -299,7 +299,7 @@ StateId state_update_indicators(Context *ctx)
   }
   
   // 90% do PWM
-  if (ARR - pwm_current >= PWM_90_PCT)
+  if (pwm_current >= PWM_90_PCT)
   {
     HAL_GPIO_WritePin(LED_D5_GPIO_Port, LED_D5_Pin, GPIO_PIN_SET);
   }
@@ -323,7 +323,7 @@ StateId state_wait(Context *ctx)
     return READ_SENSOR_STATE;
   }
 
-  return CONTROL_STATE;
+  return APPLY_PWM_STATE;
 }
 
 // Função do estado de erro
