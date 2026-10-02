@@ -93,7 +93,7 @@ uint16_t pot_value = 0;
 uint16_t pwm_target = 0;
 uint16_t pwm_current = 0;
 
-uint16_t reponso_delay_ms = 100;
+uint32_t response_delay_ms = 100;
 uint16_t last_update_ms = 0;
 
 /* USER CODE END PV */
@@ -200,7 +200,7 @@ StateId state_read_pot(Context *ctx)
   // printf("[INFO] Potentiometer: %u\n", pot_value);
 
   // Transforma o adc em milisegudos (20ms a 4s)
-  reponso_delay_ms = 20 + ((uint32_t)pot_value / 4095) * (3980 / 4095);
+  response_delay_ms = 20 + ((uint32_t)pot_value * 3980) / 4095;
 
   // printf("[INFO] Response time: %u\n", pot_value);
 
@@ -315,7 +315,7 @@ StateId state_update_indicators(Context *ctx)
 StateId state_wait(Context *ctx)
 {
   // Verifica se o tempo atual é maior que o tempo de resposta
-  if((HAL_GetTick() - last_update_ms) >= reponso_delay_ms)
+  if((HAL_GetTick() - last_update_ms) >= response_delay_ms)
   {
     // Atualiza o ultima atualização
     last_update_ms = HAL_GetTick();
